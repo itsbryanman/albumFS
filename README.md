@@ -26,6 +26,7 @@ Alpha. Being built in the open, one milestone at a time. Here is exactly what ru
 | FUSE mount with persistence | shipped |
 | JPEG carriers (DCT coefficient domain) | shipped |
 | Encryption (XChaCha20-Poly1305 + Argon2id) | shipped |
+| Markerless encrypted mode with keyed embedding order | shipped |
 | Format guard, stats, parser hardening, and CI | shipped |
 
 The current tree includes the complete filesystem, carrier codecs, encryption, mount command, safety guard, statistics, and test suite.
@@ -34,12 +35,12 @@ The current tree includes the complete filesystem, carrier codecs, encryption, m
 
 Four layers stacked on top of each other. The bottom one changes per carrier format. Everything above it does not care.
 
-1. **Stego layer.** Each photo becomes a chunk of raw capacity. For PNG that is one bit tucked into the low position of every red, green, and blue channel. Alpha is left alone. A 4000x3000 photo carries about 4.3 MB this way, and the change is invisible.
+1. **Stego layer.** Each photo becomes a chunk of raw capacity. For PNG that is one bit tucked into the low position of every red, green, and blue channel. Alpha is left alone. JPEG embeds in quantized DCT coefficients without decoding and re-encoding pixels. A 4000x3000 PNG carries about 4.3 MB this way, and the change is invisible to the eye.
 2. **Block layer.** That raw capacity gets carved into fixed 4 KiB blocks. The pool of photos becomes one flat array of blocks, and a manifest maps block numbers back to which photo they live in.
 3. **Filesystem layer.** A small ext2, basically. Superblock, an inode table, a free-space bitmap, directory entries. Real files, real folders.
 4. **FUSE layer.** Mounts the whole thing so your OS sees a normal drive.
 
-Photos that do not contain a valid AlbumFS chunk are ignored. So you can salt the folder with genuine vacation photos as decoys and only some of them are actually carriers. Nothing on the outside tells you which.
+In encrypted mode, the passphrase derives separate keys for block encryption, carrier embedding order, and the anchor bootstrap. Carrier positions are shuffled differently for each image. The encrypted superblock and manifest live in a user-selected anchor, and photos absent from that manifest are ignored as decoys. There is no constant AlbumFS marker on disk in this mode.
 
 ## Install
 
@@ -67,7 +68,7 @@ albumfs capacity beach.png
 # note: this mutates the file, run it on a throwaway copy
 albumfs codec-selftest ./scratch-copy.png
 
-# turn a folder of photos into a formatted filesystem
+# turn a folder of photos into a formatted plaintext filesystem
 albumfs format ./album
 
 # inspect allocation, inode, encryption, and carrier fill statistics
@@ -87,15 +88,16 @@ umount ~/vault
 
 `format` refuses to overwrite an existing AlbumFS pool. Pass `--force` only when you intentionally want to wipe and recreate it.
 
-To encrypt a new pool, supply a passphrase on the command line or through the environment:
+To create markerless encrypted storage, supply a passphrase and choose an anchor photo. The anchor is bootstrap-only, so the album must contain at least one additional data carrier. If `--anchor` is omitted during format, AlbumFS selects the largest-capacity image and prints its path. Opening an encrypted pool requires that same anchor.
 
 ```sh
-albumfs format --passphrase 'choose a strong passphrase' ./album
-albumfs mount --passphrase 'choose a strong passphrase' ./album ~/vault
+albumfs format --passphrase 'choose a strong passphrase' --anchor ./album/anchor.jpg ./album
+albumfs stats --passphrase 'choose a strong passphrase' --anchor ./album/anchor.jpg ./album
+albumfs mount --passphrase 'choose a strong passphrase' --anchor ./album/anchor.jpg ./album ~/vault
 
 export ALBUMFS_PASSPHRASE='choose a strong passphrase'
-albumfs stats ./album
-albumfs mount ./album ~/vault
+albumfs stats --anchor ./album/anchor.jpg ./album
+albumfs mount --anchor ./album/anchor.jpg ./album ~/vault
 ```
 
 AlbumFS does not store the passphrase and has no recovery mechanism. Losing it means losing access to the encrypted data.
@@ -116,11 +118,12 @@ JPEG is a different story. You can only touch nonzero AC coefficients without wr
 
 Read this part. It is the difference between a fun tool and a false sense of security.
 
-- AlbumFS hides data from someone who sees only the photos. It does not hide data from someone who holds the originals and runs a diff against them. Know which threat you actually have.
+- In markerless encrypted mode, filesystem contents and carrier locations are unreadable and unlocatable without both the passphrase and anchor, and there is no constant on-disk fingerprint. This is not proof against statistical steganalysis.
+- AlbumFS does not hide modifications from someone who holds the original photos and runs a diff against them. Know which threat you actually have.
 - Any program that re-saves a carrier destroys the data in it. Editors, thumbnail generators, messaging apps that recompress, and cloud sync clients all do this. If Google Photos or iCloud is syncing your carrier folder, your filesystem will evaporate on the first upload. Do not put carriers there.
 - This is not a backup. There is no redundancy across photos. Lose one carrier, lose its blocks.
 - JPEG capacity is small on purpose. This is a clever hiding place, not a hard drive.
-- Encryption provides confidentiality and integrity for filesystem blocks, but the chunk marker and plaintext superblock geometry remain detectable. Full undetectability requires keyed embedding and removal of plaintext markers, which are not implemented yet.
+- Plaintext mode intentionally keeps its visible framing for backward compatibility. Markerless layout and keyed embedding apply only when a passphrase is set.
 
 Without encryption, treat the embedded blocks as obfuscated, not secret.
 
@@ -131,7 +134,8 @@ Without encryption, treat the embedded blocks as obfuscated, not secret.
 - **v0.3** JPEG carriers via libjpeg coefficient access. Done.
 - **v0.4** Argon2id key derivation and per-block XChaCha20-Poly1305. Done.
 - **v0.5** Format safety, capacity and fill stats, parser hardening, CI, and release packaging. Done.
-- **Future** Keyed embedding order, removal of plaintext markers, redundancy, and recovery tooling.
+- **v0.6** Markerless encrypted bootstrap and keyed carrier embedding order. Done.
+- **Future** Redundancy, recovery tooling, and further research into statistical detectability.
 
 ## Contributing
 

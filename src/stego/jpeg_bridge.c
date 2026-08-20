@@ -34,6 +34,10 @@ static void albumfs_error_exit(j_common_ptr cinfo) {
     longjmp(error->jump, 1);
 }
 
+static void albumfs_output_message(j_common_ptr cinfo) {
+    (void)cinfo;
+}
+
 static void albumfs_copy_error(char *target,
                                size_t target_len,
                                const char *message) {
@@ -86,6 +90,7 @@ static int albumfs_visit_jpeg(const unsigned char *input,
 
     jpeg_std_error(&operation->error->base);
     operation->error->base.error_exit = albumfs_error_exit;
+    operation->error->base.output_message = albumfs_output_message;
     operation->decompress->err = &operation->error->base;
 
     if (setjmp(operation->error->jump)) {
