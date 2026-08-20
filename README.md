@@ -9,6 +9,8 @@ A read/write filesystem that lives inside a folder of photos.
 [![Status](https://img.shields.io/badge/status-alpha-red.svg)](#status)
 [![Stars](https://img.shields.io/github/stars/itsbryanman/albumfs?style=social)](https://github.com/itsbryanman/albumfs/stargazers)
 
+![AlbumFS encrypted filesystem demo](docs/demo.gif)
+
 Point AlbumFS at a directory of pictures and it hands you back a filesystem. Write a file into it and the bytes get spread across the low bits of your photos, below the threshold your eye can see. Unmount, and the folder is just pictures again. Double-click any one of them and it opens as the same beach you shot last summer.
 
 No cloud. No hidden partition. No container file sitting there looking suspicious. The data is in the pixels.
