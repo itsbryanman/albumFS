@@ -190,5 +190,5 @@ fn check_status(status: c_int, error: &[u8; ERROR_LEN]) -> Result<(), JpegFfiErr
 
 #[inline(never)]
 fn ensure_mozjpeg_linked() {
-    std::hint::black_box(mozjpeg_sys::jpeg_std_error as usize);
+    std::hint::black_box(mozjpeg_sys::jpeg_std_error as *const () as usize);
 }
