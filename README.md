@@ -21,14 +21,14 @@ Alpha. Being built in the open, one milestone at a time. Here is exactly what ru
 
 | Piece | State |
 |---|---|
-| PNG carrier codec (embed, extract, capacity) | working |
-| Bit-identical round-trip, verified in tests | working |
-| Filesystem layer (superblock, inodes, bitmap) | in progress, next milestone |
-| FUSE mount | in progress, next milestone |
-| JPEG carriers (DCT coefficient domain) | designed, not built |
-| Encryption (XChaCha20-Poly1305 + Argon2id) | designed, not built |
+| PNG carrier codec (embed, extract, capacity) | shipped |
+| Filesystem layer (superblock, inodes, bitmap) | shipped |
+| FUSE mount with persistence | shipped |
+| JPEG carriers (DCT coefficient domain) | shipped |
+| Encryption (XChaCha20-Poly1305 + Argon2id) | shipped |
+| Format guard, stats, parser hardening, and CI | shipped |
 
-If you clone it right now you get the codec and its test suite. The `mount` command lands in v0.2. Watch the [roadmap](#roadmap).
+The current tree includes the complete filesystem, carrier codecs, encryption, mount command, safety guard, statistics, and test suite.
 
 ## How it works
 
@@ -53,7 +53,7 @@ cargo build --release
 
 The binary lands at `target/release/albumfs`.
 
-macOS needs [macFUSE](https://osxfuse.github.io/) once the mount command ships. Linux needs `fuse3` and its headers.
+macOS needs [macFUSE](https://osxfuse.github.io/). Linux needs `fuse3` and its headers.
 
 ## Usage
 
@@ -66,13 +66,12 @@ albumfs capacity beach.png
 # embed a random payload, read it back, prove the round-trip
 # note: this mutates the file, run it on a throwaway copy
 albumfs codec-selftest ./scratch-copy.png
-```
 
-The target UX, landing in v0.2:
-
-```sh
 # turn a folder of photos into a formatted filesystem
 albumfs format ./album
+
+# inspect allocation, inode, encryption, and carrier fill statistics
+albumfs stats ./album
 
 # mount it
 albumfs mount ./album ~/vault
@@ -85,6 +84,21 @@ ls ~/vault
 # put it away
 umount ~/vault
 ```
+
+`format` refuses to overwrite an existing AlbumFS pool. Pass `--force` only when you intentionally want to wipe and recreate it.
+
+To encrypt a new pool, supply a passphrase on the command line or through the environment:
+
+```sh
+albumfs format --passphrase 'choose a strong passphrase' ./album
+albumfs mount --passphrase 'choose a strong passphrase' ./album ~/vault
+
+export ALBUMFS_PASSPHRASE='choose a strong passphrase'
+albumfs stats ./album
+albumfs mount ./album ~/vault
+```
+
+AlbumFS does not store the passphrase and has no recovery mechanism. Losing it means losing access to the encrypted data.
 
 ## Capacity
 
@@ -106,16 +120,18 @@ Read this part. It is the difference between a fun tool and a false sense of sec
 - Any program that re-saves a carrier destroys the data in it. Editors, thumbnail generators, messaging apps that recompress, and cloud sync clients all do this. If Google Photos or iCloud is syncing your carrier folder, your filesystem will evaporate on the first upload. Do not put carriers there.
 - This is not a backup. There is no redundancy across photos. Lose one carrier, lose its blocks.
 - JPEG capacity is small on purpose. This is a clever hiding place, not a hard drive.
+- Encryption provides confidentiality and integrity for filesystem blocks, but the chunk marker and plaintext superblock geometry remain detectable. Full undetectability requires keyed embedding and removal of plaintext markers, which are not implemented yet.
 
-Encryption, when it ships, means the carriers are unreadable and the payload is undetectable without your passphrase. Until then, treat the low bits as obfuscated, not secret.
+Without encryption, treat the embedded blocks as obfuscated, not secret.
 
 ## Roadmap
 
 - **v0.1** PNG codec and round-trip tests. Done.
-- **v0.2** Filesystem layer and FUSE mount. `format`, `mount`, `mkdir`, read, write, unmount, remount.
-- **v0.3** JPEG carriers via libjpeg coefficient access, so the album can be real JPEGs.
-- **v0.4** Argon2id key derivation, per-block XChaCha20-Poly1305, key-seeded embedding order.
-- **v0.5** Install polish, capacity and fill stats, fuzzed on-disk parser.
+- **v0.2** Filesystem layer and FUSE mount. Done.
+- **v0.3** JPEG carriers via libjpeg coefficient access. Done.
+- **v0.4** Argon2id key derivation and per-block XChaCha20-Poly1305. Done.
+- **v0.5** Format safety, capacity and fill stats, parser hardening, CI, and release packaging. Done.
+- **Future** Keyed embedding order, removal of plaintext markers, redundancy, and recovery tooling.
 
 ## Contributing
 

@@ -1,4 +1,4 @@
-use albumfs::stego::{png::PngCodec, CarrierCodec, ChunkMeta};
+use albumfs::stego::{png::PngCodec, CarrierCodec, ChunkMeta, ChunkWrite};
 use image::{Rgba, RgbaImage};
 use rand::Rng;
 
@@ -17,7 +17,15 @@ fn only_lsbs_change() {
     let codec = PngCodec;
     let payload: Vec<u8> = (0..500).map(|_| rng.gen()).collect();
     codec
-        .write_chunk(&path, ChunkMeta { chunk_index: 0, flags: 1 }, &payload, &[])
+        .write_chunk(
+            &path,
+            ChunkWrite::Framed(ChunkMeta {
+                chunk_index: 0,
+                flags: 1,
+            }),
+            &payload,
+            &[],
+        )
         .unwrap();
     let after = image::open(&path).unwrap().to_rgba8();
 

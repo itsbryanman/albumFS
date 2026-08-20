@@ -1,6 +1,11 @@
+use rand::seq::SliceRandom;
+use rand::SeedableRng;
+use rand_chacha::ChaCha20Rng;
 use std::path::Path;
 use thiserror::Error;
 
+pub mod jpeg;
+mod jpeg_ffi;
 pub mod png;
 
 pub const CHUNK_MAGIC: u32 = 0x414C_424D; // "ALBM"
@@ -18,6 +23,86 @@ pub enum CodecError {
     NotACarrier,
     #[error("chunk header CRC mismatch")]
     HeaderCrc,
+    #[error("JPEG coefficient error: {0}")]
+    Jpeg(String),
+    #[error("invalid carrier codec mode: {0}")]
+    InvalidMode(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageKind {
+    Png,
+    Jpeg,
+}
+
+pub fn kind_for(path: &Path) -> Option<ImageKind> {
+    match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+        "png" => Some(ImageKind::Png),
+        "jpg" | "jpeg" => Some(ImageKind::Jpeg),
+        _ => None,
+    }
+}
+
+pub enum Codec {
+    Png(png::PngCodec),
+    Jpeg(jpeg::JpegCodec),
+}
+
+impl Codec {
+    pub fn for_path(path: &Path) -> Option<Self> {
+        match kind_for(path)? {
+            ImageKind::Png => Some(Self::Png(png::PngCodec)),
+            ImageKind::Jpeg => Some(Self::Jpeg(jpeg::JpegCodec)),
+        }
+    }
+}
+
+impl CarrierCodec for Codec {
+    fn raw_capacity_bytes(&self, path: &Path) -> Result<u64, CodecError> {
+        match self {
+            Self::Png(codec) => codec.raw_capacity_bytes(path),
+            Self::Jpeg(codec) => codec.raw_capacity_bytes(path),
+        }
+    }
+
+    fn write_chunk(
+        &self,
+        path: &Path,
+        mode: ChunkWrite,
+        payload: &[u8],
+        order_key: &[u8],
+    ) -> Result<(), CodecError> {
+        match self {
+            Self::Png(codec) => codec.write_chunk(path, mode, payload, order_key),
+            Self::Jpeg(codec) => codec.write_chunk(path, mode, payload, order_key),
+        }
+    }
+
+    fn read_chunk(
+        &self,
+        path: &Path,
+        mode: ChunkRead,
+        order_key: &[u8],
+    ) -> Result<(ChunkMeta, Vec<u8>), CodecError> {
+        match self {
+            Self::Png(codec) => codec.read_chunk(path, mode, order_key),
+            Self::Jpeg(codec) => codec.read_chunk(path, mode, order_key),
+        }
+    }
+
+    fn write_prefix(&self, path: &Path, bytes: &[u8]) -> Result<(), CodecError> {
+        match self {
+            Self::Png(codec) => codec.write_prefix(path, bytes),
+            Self::Jpeg(codec) => codec.write_prefix(path, bytes),
+        }
+    }
+
+    fn read_prefix(&self, path: &Path, length: usize) -> Result<Vec<u8>, CodecError> {
+        match self {
+            Self::Png(codec) => codec.read_prefix(path, length),
+            Self::Jpeg(codec) => codec.read_prefix(path, length),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,19 +111,65 @@ pub struct ChunkMeta {
     pub flags: u16,
 }
 
-/// A carrier stores one opaque chunk (metadata plus payload) inside an image.
-/// order_key is reserved for a keyed embedding permutation in a later milestone
-/// and is unused in this one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChunkWrite {
+    Framed(ChunkMeta),
+    Markerless { chunk_index: u32 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChunkRead {
+    Framed,
+    Markerless {
+        chunk_index: u32,
+        payload_len: usize,
+    },
+}
+
+/// A carrier stores one opaque chunk inside an image. Framed mode preserves the
+/// plaintext ALBM header. Markerless mode requires a nonempty order key and
+/// carries no in-band marker or length.
 pub trait CarrierCodec {
-    fn capacity_bytes(&self, path: &Path) -> Result<u64, CodecError>;
+    fn raw_capacity_bytes(&self, path: &Path) -> Result<u64, CodecError>;
+    fn capacity_bytes(&self, path: &Path) -> Result<u64, CodecError> {
+        Ok(self
+            .raw_capacity_bytes(path)?
+            .saturating_sub(CHUNK_HEADER_LEN as u64))
+    }
     fn write_chunk(
         &self,
         path: &Path,
-        meta: ChunkMeta,
+        mode: ChunkWrite,
         payload: &[u8],
         order_key: &[u8],
     ) -> Result<(), CodecError>;
-    fn read_chunk(&self, path: &Path, order_key: &[u8]) -> Result<(ChunkMeta, Vec<u8>), CodecError>;
+    fn read_chunk(
+        &self,
+        path: &Path,
+        mode: ChunkRead,
+        order_key: &[u8],
+    ) -> Result<(ChunkMeta, Vec<u8>), CodecError>;
+    fn write_prefix(&self, path: &Path, bytes: &[u8]) -> Result<(), CodecError>;
+    fn read_prefix(&self, path: &Path, length: usize) -> Result<Vec<u8>, CodecError>;
+}
+
+pub(crate) fn order_positions(
+    mut positions: Vec<usize>,
+    order_key: &[u8],
+    chunk_index: u32,
+) -> Result<Vec<usize>, CodecError> {
+    if order_key.len() != 32 {
+        return Err(CodecError::InvalidMode(
+            "markerless mode requires a 32-byte order key".into(),
+        ));
+    }
+    let mut material = [0u8; 36];
+    material[..32].copy_from_slice(order_key);
+    material[32..].copy_from_slice(&chunk_index.to_le_bytes());
+    let seed = blake3::derive_key("albumfs carrier order v1", &material);
+    let mut rng = ChaCha20Rng::from_seed(seed);
+    positions.shuffle(&mut rng);
+    Ok(positions)
 }
 
 use crc::{Crc, CRC_16_IBM_SDLC};
